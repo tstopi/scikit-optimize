@@ -5,7 +5,7 @@ from numbers import Number
 
 import numpy as np
 
-from scipy.optimize import fmin_l_bfgs_b
+from scipy.optimize import fmin_l_bfgs_b,differential_evolution
 
 from sklearn.base import clone
 from sklearn.base import is_regressor
@@ -207,17 +207,17 @@ class Optimizer(object):
             if has_gradients(self.base_estimator_):
                 acq_optimizer = "lbfgs"
             else:
-                acq_optimizer = "sampling"
+                acq_optimizer = "de"
 
-        if acq_optimizer not in ["lbfgs", "sampling"]:
-            raise ValueError("Expected acq_optimizer to be 'lbfgs' or "
+        if acq_optimizer not in ["lbfgs", "sampling","de"]:
+            raise ValueError("Expected acq_optimizer to be 'lbfgs', 'de' or "
                              "'sampling', got {0}".format(acq_optimizer))
 
         if (not has_gradients(self.base_estimator_) and
-            acq_optimizer != "sampling"):
-            raise ValueError("The regressor {0} should run with "
+            acq_optimizer not in ["sampling", "de"]): 
+           raise ValueError("The regressor {0} should run with "
                              "acq_optimizer"
-                             "='sampling'.".format(type(base_estimator)))
+                             "='sampling' or 'de'.".format(type(base_estimator)))
         self.acq_optimizer = acq_optimizer
 
         # record other arguments
@@ -496,10 +496,11 @@ class Optimizer(object):
 
             self.next_xs_ = []
             for cand_acq_func in self.cand_acq_funcs_:
-                values = _gaussian_acquisition(
-                    X=X, model=est, y_opt=np.min(self.yi),
-                    acq_func=cand_acq_func,
-                    acq_func_kwargs=self.acq_func_kwargs)
+                if self.acq_optimizer in ["sampling","lbfgs"]:
+                    values = _gaussian_acquisition(
+                        X=X, model=est, y_opt=np.min(self.yi),
+                        acq_func=cand_acq_func,
+                        acq_func_kwargs=self.acq_func_kwargs)
                 # Find the minimum of the acquisition function by randomly
                 # sampling points from the space
                 if self.acq_optimizer == "sampling":
@@ -527,6 +528,12 @@ class Optimizer(object):
                     cand_acqs = np.array([r[1] for r in results])
                     next_x = cand_xs[np.argmin(cand_acqs)]
 
+                elif self.acq_optimizer == "de":
+                    res = differential_evolution(gaussian_acquisition_1D,self.space.transformed_bounds,
+                                             args=(est, np.min(self.yi), cand_acq_func,
+                                             self.acq_func_kwargs, False))
+                    next_x = res.x
+
                 # lbfgs should handle this but just in case there are
                 # precision errors.
                 if not self.space.is_categorical:
@@ -534,6 +541,8 @@ class Optimizer(object):
                         next_x, transformed_bounds[:, 0],
                         transformed_bounds[:, 1])
                 self.next_xs_.append(next_x)
+
+
 
             if self.acq_func == "gp_hedge":
                 logits = np.array(self.gains_)
